@@ -1,0 +1,11 @@
+# Python
+__pycache__/
+*.pyc
+
+# Local data (DO NOT COMMIT)
+requisitions_raw.xlsx
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
