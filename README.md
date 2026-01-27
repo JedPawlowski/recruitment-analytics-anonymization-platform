@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-This project implements a production-ready Python data anonymization pipeline for HR / ATS requisition data.
+This project demonstrates a production-style Python pipeline for anonymizing ATS requisition data while preserving analytical value for BI and reporting use cases.
 
 The script transforms a raw requisitions export into a fully anonymized, analytics-ready dataset by:
 - removing or anonymizing personal and sensitive information
@@ -250,6 +250,3 @@ python anonymize_requisitions.py
 requisitions_anonymized.xlsx
 Fully anonymized, analytics-ready dataset
 Safe for demos, testing, and BI development
-
-## Final
-This project demonstrates practical experience in data anonymization, data modeling, and analytics-focused data engineering using Python and pandas.
