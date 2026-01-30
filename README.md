@@ -114,7 +114,7 @@ The anonymization process is implemented as a single, reproducible Python pipeli
 5. Select and rename final output schema
 6. Export anonymized dataset
 
-### Processing Order (Why This Matters)
+### Processing Order
 The script is intentionally ordered to avoid data dependency issues:
 
 1. **Reference data loading**
