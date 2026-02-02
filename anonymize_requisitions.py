@@ -2,12 +2,13 @@ import pandas as pd
 import numpy as np
 from faker import Faker
 import re
-
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent        # scripts/
 PROJECT_DIR = BASE_DIR.parent                    # recruitment_data_anonymization/
 DATA_DIR = PROJECT_DIR / "requisitions"
+
+MAX_DATE = pd.Timestamp("2026-01-31")
 
 # ============================================================
 # Configuration & reproducibility
@@ -255,6 +256,9 @@ date_cols = [
     "Earliest Job Posting Start Date"
 ]
 
+def clamp_date(series, max_date):
+    return series.where(series <= max_date, max_date)
+
 for col in date_cols:
     if col in df_anon.columns:
         df_anon[col] = pd.to_datetime(df_anon[col], errors="coerce")
@@ -263,43 +267,70 @@ for col in date_cols:
 if "Request Completed Date" in df_anon.columns:
     df_anon["Created By HM"] = df_anon["Request Completed Date"]
 
+# Approved Date: before Recruiting Start Date, capped at MAX_DATE
 df_anon["Approved Date"] = (
     df_anon["Recruiting Start Date"]
-    - pd.to_timedelta(np.random.randint(5, 15, size=len(df_anon)), unit="D")
+    - pd.to_timedelta(
+        np.random.randint(3, 14, size=len(df_anon)),
+        unit="D"
+    )
 )
 
+df_anon["Approved Date"] = df_anon["Approved Date"].clip(upper=MAX_DATE)
+
+# External Posting Date (optional)
 mask = np.random.rand(len(df_anon)) < 0.7
 df_anon.loc[mask, "External Posting Date"] = (
     df_anon.loc[mask, "Approved Date"]
     + pd.to_timedelta(np.random.randint(1, 10, size=mask.sum()), unit="D")
 )
 
+df_anon["External Posting Date"] = df_anon["External Posting Date"].clip(upper=MAX_DATE)
+
+# Internal Careers Posting
 df_anon["Internal Careers Posting"] = (
     df_anon["Approved Date"]
     + pd.to_timedelta(np.random.randint(0, 5, size=len(df_anon)), unit="D")
 )
 
+df_anon["Internal Careers Posting"] = df_anon["Internal Careers Posting"].clip(upper=MAX_DATE)
+
 df_anon["Posting Date"] = df_anon[
     ["External Posting Date", "Internal Careers Posting"]
 ].min(axis=1)
+
+df_anon["Posting Date"] = df_anon["Posting Date"].clip(upper=MAX_DATE)
 
 df_anon["Transaction Date"] = df_anon["Posting Date"]
 
 df_anon["Campaign Year"] = df_anon["Posting Date"].dt.year
 
+df_anon["Target Hire Date"] = (
+    df_anon["Posting Date"]
+    + pd.to_timedelta(
+        np.random.randint(30, 120, size=len(df_anon)),
+        unit="D"
+    )
+).clip(upper=MAX_DATE)
+
 df_anon["Contract End Date"] = (
     df_anon["Target Hire Date"]
-    + pd.to_timedelta(np.random.randint(180, 720, size=len(df_anon)), unit="D")
-)
+    + pd.to_timedelta(
+        np.random.randint(180, 720, size=len(df_anon)),
+        unit="D"
+    )
+).clip(upper=MAX_DATE)
 
-# Intake Meeting happens shortly before Recruiting Start Date
+# Intake Meeting happens shortly before Approved Date
 df_anon["Intake Meeting"] = (
-    df_anon["Recruiting Start Date"]
+    df_anon["Approved Date"]
     - pd.to_timedelta(
-        np.random.randint(1, 7, size=len(df_anon)),
+        np.random.randint(1, 10, size=len(df_anon)),
         unit="D"
     )
 )
+
+df_anon["Intake Meeting"] = df_anon["Intake Meeting"].clip(upper=MAX_DATE)
 
 # ============================================================
 # Business logic derivations
@@ -420,6 +451,14 @@ existing_columns = {
 
 df_anon = df_anon[list(existing_columns.keys())].rename(columns=existing_columns)
 
+date_cols = df_anon.select_dtypes(include="datetime64[ns]").columns
+
+for col in date_cols:
+    df_anon[col] = clamp_date(df_anon[col], MAX_DATE)
+
+assert df_anon.select_dtypes("datetime64[ns]").max().max() <= MAX_DATE
+
+print("Date validation passed (<= 2026-01-31)")
 print("Final Requisitions schema applied")
 print("Columns:", list(df_anon.columns))
 
