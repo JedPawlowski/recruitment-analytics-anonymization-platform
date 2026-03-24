@@ -285,6 +285,10 @@ Cost    → How expensive
 
 ---
 
+The Power BI model enables end-to-end recruitment analytics, including funnel conversion analysis, time-to-hire metrics, and sourcing performance evaluation.
+
+---
+
 # 🧪 Data Quality & Validation
 
 The pipeline includes:
@@ -314,7 +318,7 @@ The project simulates multiple clients:
 ## 1. Clone repository
 
 ```bash
-git clone <repo_url>
+git clone https://github.com/JedPawlowski/recruitment-analytics-anonymization-platform.git
 ```
 
 ## 2. Install dependencies
