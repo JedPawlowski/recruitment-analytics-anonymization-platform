@@ -10,43 +10,12 @@ DATA_DIR = PROJECT_DIR / "requisitions"
 
 MAX_DATE = pd.Timestamp("2026-01-31")
 
-# ============================================================
-# Configuration & reproducibility
-# ============================================================
-
-fake = Faker()
-Faker.seed(42)
-np.random.seed(42)
-
-INPUT_FILE = "requisitions_raw.xlsx"
-OUTPUT_FILE = "requisitions_anonymized.xlsx"
-
-print("Python script started")
-
 # -------------------------------------------------
 # Load job reference dimension
 # -------------------------------------------------
 
 job_ref = pd.read_excel(DATA_DIR / "job_reference_table.xlsx")
 job_ref.columns = job_ref.columns.str.strip()
-
-print("Job reference table loaded")
-print("Reference rows:", len(job_ref))
-
-# -------------------------------------------------
-# Build lookup dictionaries
-# -------------------------------------------------
-
-TITLE_TO_FAMILY = dict(zip(job_ref["Job Posting Title"], job_ref["Job Family"]))
-TITLE_TO_GRADE = dict(zip(job_ref["Job Posting Title"], job_ref["Job Grade"]))
-TITLE_TO_PROGRAMME = dict(zip(job_ref["Job Posting Title"], job_ref["Programme Type"]))
-
-# ============================================================
-# Load Excel (non-standard header handled explicitly)
-# ============================================================
-
-df = pd.read_excel(DATA_DIR / "requisitions_raw.xlsx", header=3)
-df.columns = df.columns.str.strip()
 
 # -------------------------------------------------
 # Load geo reference dimension
@@ -66,405 +35,476 @@ if len(geo_ref.columns) == 1:
 # Normalize column names (after split!)
 geo_ref.columns = geo_ref.columns.str.strip().str.lower()
 
-print("geo_ref columns:", geo_ref.columns.tolist())
-
-print("Excel loaded")
-print(f"Rows: {len(df)}")
-print(f"Columns: {len(df.columns)}")
-
-# Work on a copy (raw data remains untouched)
-df_anon = df.copy()
-
-# --- Dimension anonymization helpers ---
-
-def anonymize_org_dimension(series, prefix):
-    values = series.dropna().unique()
-    mapping = {val: f"{prefix}_{i+1:03d}" for i, val in enumerate(values)}
-    return series.map(mapping)
-
-# --- Business derivation helpers ---
-
-def derive_workflow_name(row):
-    if row["Programme Type"] == "Internship":
-        return "Internship"
-    if row["Programme Type"] == "Graduate Programme":
-        return "Graduate / Early Career"
-    if row["Job Grade"] in ["Executive", "VIP"]:
-        return "Executive"
-    if row["Job Grade"] in ["Leadership", "Management"]:
-        return "Management"
-    if pd.notna(row["Number of Openings Total"]) and row["Number of Openings Total"] >= 5:
-        return "Volume"
-    return "Professional"
-
-# Randomly sample a realistic city / county / currency per country
-def derive_geo_fields(country):
-    subset = geo_ref[geo_ref["country"] == country]
-
-    if subset.empty:
-        return pd.Series(["Unknown City", "Unknown County", None])
-
-    row = subset.sample(1).iloc[0]
-
-    return pd.Series([
-        row["city"],
-        row["region"],
-        row["currency"]
-    ])
 
 # ============================================================
-# Anonymize primary identifiers
+# Configuration & reproducibility
 # ============================================================
 
-req_ids = df_anon["Job Requisition ID"].astype(str).unique()
-req_id_map = {old: f"REQ_{i:06d}" for i, old in enumerate(req_ids, start=1)}
+fake = Faker()
 
-df_anon["Job Requisition ID"] = df_anon["Job Requisition ID"].map(req_id_map)
+INPUT_FILE = "requisitions_raw.xlsx"
 
-print("Job Requisition IDs anonymized")
+print("Python script started")
 
-# ============================================================
-# Anonymize people (names & emails)
-# ============================================================
+def anonymize_requisitions(client_code, client_name, sample_ratio, job_ref, geo_ref):
 
-people_cols = [
-    "Hiring Manager",
-    "Recruiter",
-    "Primary Recruiter",
-    "Primary Sourcer",
-    "Recruiters as of Most Recent Fill Date"
-]
+    print(f"Processing {client_name}")
 
-unique_people = set()
-for col in people_cols:
-    unique_people.update(df_anon[col].dropna().unique())
+    # Set client-specific randomness
+    Faker.seed(hash(client_code) % 10000)
+    np.random.seed(abs(hash(client_code)) % (2**32))
 
-people_map = {p: fake.name() for p in unique_people}
+    print("Job reference table loaded")
+    print("Reference rows:", len(job_ref))
 
-def map_name(value):
-    return people_map.get(value) if pd.notna(value) else value
+    # -------------------------------------------------
+    # Build lookup dictionaries
+    # -------------------------------------------------
 
-for col in people_cols:
-    df_anon[col] = df_anon[col].map(map_name)
+    TITLE_TO_FAMILY = dict(zip(job_ref["Job Posting Title"], job_ref["Job Family"]))
+    TITLE_TO_GRADE = dict(zip(job_ref["Job Posting Title"], job_ref["Job Grade"]))
+    TITLE_TO_PROGRAMME = dict(zip(job_ref["Job Posting Title"], job_ref["Programme Type"]))
 
-print(f"People anonymized ({len(unique_people)} unique individuals)")
+    # ============================================================
+    # Load Excel (non-standard header handled explicitly)
+    # ============================================================
 
-# ============================================================
-# Operating Structure anonymization
-# ============================================================
+    df = pd.read_excel(DATA_DIR / "requisitions_raw.xlsx", header=3)
+    df.columns = df.columns.str.strip()
 
-if "Operating Structure" in df_anon.columns:
-    df_anon["Operating Structure"] = anonymize_org_dimension(
-        df_anon["Operating Structure"], "ORG"
+    # Sample different volume per client
+    df = df.sample(frac=sample_ratio, random_state=None).reset_index(drop=True)
+
+    print("Excel loaded")
+    print(f"Rows: {len(df)}")
+    print(f"Columns: {len(df.columns)}")
+
+    # Work on a copy (raw data remains untouched)
+    df_anon = df.copy()
+
+    # --- Dimension anonymization helpers ---
+
+    def anonymize_org_dimension(series, prefix):
+        values = series.dropna().unique()
+        mapping = {val: f"{prefix}_{i+1:03d}" for i, val in enumerate(values)}
+        return series.map(mapping)
+
+    # --- Business derivation helpers ---
+
+    def derive_workflow_name(row):
+        if row["Programme Type"] == "Internship":
+            return "Internship"
+        if row["Programme Type"] == "Graduate Programme":
+            return "Graduate / Early Career"
+        if row["Job Grade"] in ["Executive", "VIP"]:
+            return "Executive"
+        if row["Job Grade"] in ["Leadership", "Management"]:
+            return "Management"
+        if pd.notna(row["Number of Openings Total"]) and row["Number of Openings Total"] >= 5:
+            return "Volume"
+        return "Professional"
+
+    # Randomly sample a realistic city / county / currency per country
+    def derive_geo_fields(country):
+        subset = geo_ref[geo_ref["country"] == country]
+
+        if subset.empty:
+            return pd.Series(["Unknown City", "Unknown County", None])
+
+        row = subset.sample(1).iloc[0]
+
+        return pd.Series([
+            row["city"],
+            row["region"],
+            row["currency"]
+        ])
+
+    # ============================================================
+    # Anonymize primary identifiers
+    # ============================================================
+
+    req_ids = df_anon["Job Requisition ID"].astype(str).unique()
+    req_id_map = {
+    old: f"{client_code}_REQ_{i:06d}"
+    for i, old in enumerate(req_ids, start=1)
+}
+
+    df_anon["Job Requisition ID"] = df_anon["Job Requisition ID"].map(req_id_map)
+
+    print("Job Requisition IDs anonymized")
+
+    # ============================================================
+    # Anonymize people (names & emails)
+    # ============================================================
+
+    people_cols = [
+        "Hiring Manager",
+        "Recruiter",
+        "Primary Recruiter",
+        "Primary Sourcer",
+        "Recruiters as of Most Recent Fill Date"
+    ]
+
+    unique_people = set()
+    for col in people_cols:
+        unique_people.update(df_anon[col].dropna().unique())
+
+    people_map = {p: fake.name() for p in unique_people}
+
+    def map_name(value):
+        return people_map.get(value) if pd.notna(value) else value
+
+    for col in people_cols:
+        df_anon[col] = df_anon[col].map(map_name)
+
+    print(f"People anonymized ({len(unique_people)} unique individuals)")
+
+    # ============================================================
+    # Operating Structure anonymization
+    # ============================================================
+
+    if "Operating Structure" in df_anon.columns:
+        df_anon["Operating Structure"] = anonymize_org_dimension(
+            df_anon["Operating Structure"], "ORG"
+        )
+
+    print("Operating Structure anonymized")
+
+    # ============================================================
+    # Cost centers anonymization
+    # ============================================================
+
+    if "Cost Centre" in df_anon.columns:
+        df_anon["Cost Centre"] = df_anon["Cost Centre"].apply(
+            lambda x: (
+                "".join(c for c in str(x).strip() if c.isdigit())
+                if pd.notna(x) and str(x).strip()[0].isdigit()
+                else None
+            )
+        )
+
+    print("Cost centers anonymized")
+
+    # ============================================================
+    # Job Posting Title anonymization
+    # ============================================================
+
+    VALID_TITLES = job_ref["Job Posting Title"].unique().tolist()
+
+    unique_titles = df_anon["Job Posting Title"].dropna().unique()
+    title_mapping = {
+        real: VALID_TITLES[i % len(VALID_TITLES)]
+        for i, real in enumerate(unique_titles)
+    }
+
+    df_anon["Job Posting Title"] = df_anon["Job Posting Title"].map(title_mapping)
+
+    # -------------------------------------------------
+    # Derive job-related attributes from reference
+    # -------------------------------------------------
+
+    df_anon["Job Family"] = df_anon["Job Posting Title"].map(TITLE_TO_FAMILY)
+    df_anon["Job Grade"] = df_anon["Job Posting Title"].map(TITLE_TO_GRADE)
+    df_anon["Programme Type"] = df_anon["Job Posting Title"].map(TITLE_TO_PROGRAMME)
+
+    df_anon["Job Desc"] = None
+
+    print("Job attributes derived from reference table")
+
+    missing_refs = df_anon[df_anon["Job Family"].isna()]
+
+    if not missing_refs.empty:
+        print("WARNING: Missing job reference for some titles")
+        print(missing_refs["Job Posting Title"].unique())
+
+    # -------------------------------------------------
+    # Derive salary ranges
+    # -------------------------------------------------
+
+    GRADE_TO_SALARY_RANGE = {
+        "Early Career": (2000, 4000),
+        "IC": (4000, 7000),
+        "Professional": (5000, 9000),
+        "Manager": (7000, 12000),
+        "Director": (10000, 16000),
+        "Senior Director": (14000, 20000),
+        "Executive": (18000, 30000)
+    }
+
+    # Generate realistic but non-identifiable salary ranges per job grade
+    def generate_salary(job_grade):
+        low, high = GRADE_TO_SALARY_RANGE.get(job_grade, (3000, 6000))
+        min_sal = np.random.randint(low, high - 1000)
+        max_sal = min_sal + np.random.randint(1000, 4000)
+        return pd.Series([min_sal, max_sal])
+
+    df_anon[["Expected Salary Min", "Expected Salary Max"]] = (
+        df_anon["Job Grade"].apply(generate_salary)
     )
 
-print("Operating Structure anonymized")
+    # -------------------------------------------------
+    # Derive geo attributes from reference
+    # -------------------------------------------------
 
-# ============================================================
-# Cost centers anonymization
-# ============================================================
+    df_anon[["City", "County", "Currency"]] = (
+        df_anon["Country"].apply(derive_geo_fields)
+    )
 
-if "Cost Centre" in df_anon.columns:
-    df_anon["Cost Centre"] = df_anon["Cost Centre"].apply(
-        lambda x: (
-            "".join(c for c in str(x).strip() if c.isdigit())
-            if pd.notna(x) and str(x).strip()[0].isdigit()
-            else None
+    df_anon["Advertising Country"] = df_anon["Country"]
+
+    # ============================================================
+    # Create synthetic date columns
+    # ============================================================
+
+    date_cols = [
+        "Date Request Entered",
+        "Recruiting Start Date",
+        "Request Completed Date",
+        "Target Hire Date",
+        "Job Requisition Fill Date",
+        "Close Date",
+        "Earliest Job Posting Start Date"
+    ]
+
+    def clamp_date(series, max_date):
+        return series.where(series <= max_date, max_date)
+
+    for col in date_cols:
+        if col in df_anon.columns:
+            df_anon[col] = pd.to_datetime(df_anon[col], errors="coerce")
+
+    # Created By HM should be based on Request Completed Date
+    if "Request Completed Date" in df_anon.columns:
+        df_anon["Created By HM"] = df_anon["Request Completed Date"]
+
+    # Approved Date: before Recruiting Start Date, capped at MAX_DATE
+    df_anon["Approved Date"] = (
+        df_anon["Recruiting Start Date"]
+        - pd.to_timedelta(
+            np.random.randint(3, 14, size=len(df_anon)),
+            unit="D"
         )
     )
 
-print("Cost centers anonymized")
+    df_anon["Approved Date"] = df_anon["Approved Date"].clip(upper=MAX_DATE)
 
-# ============================================================
-# Job Posting Title anonymization
-# ============================================================
+    # External Posting Date (optional)
+    mask = np.random.rand(len(df_anon)) < 0.7
+    df_anon.loc[mask, "External Posting Date"] = (
+        df_anon.loc[mask, "Approved Date"]
+        + pd.to_timedelta(np.random.randint(1, 10, size=mask.sum()), unit="D")
+    )
 
-VALID_TITLES = job_ref["Job Posting Title"].unique().tolist()
+    df_anon["External Posting Date"] = df_anon["External Posting Date"].clip(upper=MAX_DATE)
 
-unique_titles = df_anon["Job Posting Title"].dropna().unique()
-title_mapping = {
-    real: VALID_TITLES[i % len(VALID_TITLES)]
-    for i, real in enumerate(unique_titles)
-}
+    # Internal Careers Posting
+    df_anon["Internal Careers Posting"] = (
+        df_anon["Approved Date"]
+        + pd.to_timedelta(np.random.randint(0, 5, size=len(df_anon)), unit="D")
+    )
 
-df_anon["Job Posting Title"] = df_anon["Job Posting Title"].map(title_mapping)
+    df_anon["Internal Careers Posting"] = df_anon["Internal Careers Posting"].clip(upper=MAX_DATE)
 
-# -------------------------------------------------
-# Derive job-related attributes from reference
-# -------------------------------------------------
+    df_anon["Posting Date"] = df_anon[
+        ["External Posting Date", "Internal Careers Posting"]
+    ].min(axis=1)
 
-df_anon["Job Family"] = df_anon["Job Posting Title"].map(TITLE_TO_FAMILY)
-df_anon["Job Grade"] = df_anon["Job Posting Title"].map(TITLE_TO_GRADE)
-df_anon["Programme Type"] = df_anon["Job Posting Title"].map(TITLE_TO_PROGRAMME)
+    df_anon["Posting Date"] = df_anon["Posting Date"].clip(upper=MAX_DATE)
 
-df_anon["Job Desc"] = None
+    df_anon["Transaction Date"] = df_anon["Posting Date"]
 
-print("Job attributes derived from reference table")
+    df_anon["Campaign Year"] = df_anon["Posting Date"].dt.year
 
-missing_refs = df_anon[df_anon["Job Family"].isna()]
+    df_anon["Target Hire Date"] = (
+        df_anon["Posting Date"]
+        + pd.to_timedelta(
+            np.random.randint(30, 120, size=len(df_anon)),
+            unit="D"
+        )
+    ).clip(upper=MAX_DATE)
 
-if not missing_refs.empty:
-    print("WARNING: Missing job reference for some titles")
-    print(missing_refs["Job Posting Title"].unique())
+    df_anon["Contract End Date"] = (
+        df_anon["Target Hire Date"]
+        + pd.to_timedelta(
+            np.random.randint(180, 720, size=len(df_anon)),
+            unit="D"
+        )
+    ).clip(upper=MAX_DATE)
 
-# -------------------------------------------------
-# Derive salary ranges
-# -------------------------------------------------
+    # Intake Meeting happens shortly before Approved Date
+    df_anon["Intake Meeting"] = (
+        df_anon["Approved Date"]
+        - pd.to_timedelta(
+            np.random.randint(1, 10, size=len(df_anon)),
+            unit="D"
+        )
+    )
 
-GRADE_TO_SALARY_RANGE = {
-    "Early Career": (2000, 4000),
-    "IC": (4000, 7000),
-    "Professional": (5000, 9000),
-    "Manager": (7000, 12000),
-    "Director": (10000, 16000),
-    "Senior Director": (14000, 20000),
-    "Executive": (18000, 30000)
-}
+    df_anon["Intake Meeting"] = df_anon["Intake Meeting"].clip(upper=MAX_DATE)
 
-# Generate realistic but non-identifiable salary ranges per job grade
-def generate_salary(job_grade):
-    low, high = GRADE_TO_SALARY_RANGE.get(job_grade, (3000, 6000))
-    min_sal = np.random.randint(low, high - 1000)
-    max_sal = min_sal + np.random.randint(1000, 4000)
-    return pd.Series([min_sal, max_sal])
+    # ============================================================
+    # Business logic derivations
+    # ============================================================
 
-df_anon[["Expected Salary Min", "Expected Salary Max"]] = (
-    df_anon["Job Grade"].apply(generate_salary)
-)
+    # Workflow depends on Job Grade, Programme Type, and Number of Openings
+    df_anon["Workflow Name"] = df_anon.apply(derive_workflow_name, axis=1)
 
-# -------------------------------------------------
-# Derive geo attributes from reference
-# -------------------------------------------------
+    df_anon["Posting Agency"] = np.where(
+        df_anon["External Posting Date"].notna(),
+        "Yes",
+        "No"
+    )
 
-df_anon[["City", "County", "Currency"]] = (
-    df_anon["Country"].apply(derive_geo_fields)
-)
+    df_anon["Internal Only Requisition"] = np.where(
+        df_anon["External Posting Date"].notna(),
+        "No",
+        "Yes"
+    )
 
-df_anon["Advertising Country"] = df_anon["Country"]
+    df_anon["Publish To Agencies"] = np.where(
+        df_anon["Posting Agency"] == "Yes", "Yes", "No"
+    )
 
-# ============================================================
-# Create synthetic date columns
-# ============================================================
+    df_anon["Posting Type (Int/Ext)"] = np.where(
+        df_anon["External Posting Date"].notna(),
+        "External",
+        "Internal"
+    )
 
-date_cols = [
-    "Date Request Entered",
-    "Recruiting Start Date",
-    "Request Completed Date",
-    "Target Hire Date",
-    "Job Requisition Fill Date",
-    "Close Date",
-    "Earliest Job Posting Start Date"
+    ALL_RECRUITERS = df_anon["Recruiter"].dropna().unique()
+
+    def pick_secondary(row):
+        if len(ALL_RECRUITERS) <= 1:
+            return None
+        return np.random.choice([r for r in ALL_RECRUITERS if r != row["Recruiter"]])
+
+    df_anon["Secondary Recruiter"] = df_anon.apply(pick_secondary, axis=1)
+
+    if "Is Evergreen" in df_anon.columns:
+        df_anon["Pipeline (Evergreen)"] = (
+            df_anon["Is Evergreen"]
+            .fillna("No")
+            .replace("", "No")
+        )
+    else:
+        df_anon["Pipeline (Evergreen)"] = "No"
+
+    # ============================================================
+    # Free-text cleanup
+    # ============================================================
+
+    text_cols = [
+        "Recruiting Instruction",
+        "Close Comments",
+        "Justification",
+        "Pending Role Assignment (for Open/Frozen Job Requisitions)"
+    ]
+
+    for col in text_cols:
+        if col in df_anon.columns:
+            df_anon[col] = None
+
+    print("Free-text cleared")
+
+
+    # ============================================================
+    # Requisitions schema – final column selection & renaming
+    # ============================================================
+
+    df_anon["Company Name"] = client_name
+    df_anon["Client Code"] = client_code
+
+    REQUISITION_COLUMNS_MAP = {
+        "Company Name": "Company Name",
+        "Client Code": "Client Code",
+        "Workflow Name": "Workflow Name",
+        "Country": "Country",
+        "Job Requisition ID": "Requisition ID",
+        "Posting Agency": "Posting Agency",
+        "City": "City",
+        "Job Posting Title": "Final Job Title",
+        "Advertising Country": "Advertising Country",
+        "Approved Date": "Approved Date",
+        "Recruiter": "ATS Recruiter",
+        "Primary Sourcer": "Sourcer",
+        "Justification": "Business Justification",
+        "Close Date": "Closed Date",
+        "Contract End Date": "Contract End Date",
+        "County": "County",
+        "Created By HM": "Created By HM",
+        "Currency": "Currency",
+        "Expected Salary Max": "Expected Salary Max",
+        "Expected Salary Min": "Expected Salary Min",
+        "Target Hire Date": "Expected Start Date",
+        "External Posting Date": "External Posting Date",
+        "Intake Meeting": "Intake Meeting",
+        "Internal Only Requisition": "Internal Only Requisition",
+        "Internal Careers Posting": "Internal Careers Posting",
+        "Job Family": "Job Family",
+        "Job Desc": "Job Desc",
+        "Job Grade": "Job Grade",
+        "Number of Openings Total": "No Positions Total",
+        "Operating Structure": "Org Level",
+        "Pipeline (Evergreen)": "Pipeline (Evergreen)",
+        "Posting Date": "Posting Date",
+        "Publish To Agencies": "Publish To Agencies",
+        "Secondary Recruiter": "Secondary Recruiter",
+        "Worker Type Hiring Requirement": "Type of Position",
+        "Transaction Date": "Transaction Date",
+        "Posting Type (Int/Ext)": "Posting Type (Int/Ext)",
+        "Recruiting Start Date": "Recruitment start date",
+        "Job Requisition Status": "Current Req Status",
+        "Programme Type": "Programme Type",
+        "Campaign Year": "Campaign Year"
+    }
+
+    # Keep only required columns that actually exist
+    existing_columns = {
+        src: tgt
+        for src, tgt in REQUISITION_COLUMNS_MAP.items()
+        if src in df_anon.columns
+    }
+
+    df_anon = df_anon[list(existing_columns.keys())].rename(columns=existing_columns)
+
+    date_cols = df_anon.select_dtypes(include="datetime64[ns]").columns
+
+    for col in date_cols:
+        df_anon[col] = clamp_date(df_anon[col], MAX_DATE)
+
+    assert df_anon.select_dtypes("datetime64[ns]").max().max() <= MAX_DATE
+
+    print("Date validation passed (<= 2026-01-31)")
+    print("Final Requisitions schema applied")
+    print("Columns:", list(df_anon.columns))
+
+    df_anon = df_anon.sort_values("Requisition ID").reset_index(drop=True)
+
+    df_anon["Company Name"] = df_anon["Company Name"].astype("category")
+    df_anon["Client Code"] = df_anon["Client Code"].astype("category")
+    
+    # ============================================================
+    # Save output
+    # ============================================================
+
+    output_file = DATA_DIR / f"{client_code}_requisitions.xlsx"
+    df_anon.to_excel(output_file, index=False)
+
+    print(f"{client_name} saved: {output_file}")
+
+CLIENTS = [
+    {"code": "C1", "name": "Client 1", "sample_ratio": 0.6},
+    {"code": "C2", "name": "Client 2", "sample_ratio": 0.8},
+    {"code": "C3", "name": "Client 3", "sample_ratio": 0.4},
+    {"code": "C4", "name": "Client 4", "sample_ratio": 1.0},
 ]
 
-def clamp_date(series, max_date):
-    return series.where(series <= max_date, max_date)
 
-for col in date_cols:
-    if col in df_anon.columns:
-        df_anon[col] = pd.to_datetime(df_anon[col], errors="coerce")
-
-# Created By HM should be based on Request Completed Date
-if "Request Completed Date" in df_anon.columns:
-    df_anon["Created By HM"] = df_anon["Request Completed Date"]
-
-# Approved Date: before Recruiting Start Date, capped at MAX_DATE
-df_anon["Approved Date"] = (
-    df_anon["Recruiting Start Date"]
-    - pd.to_timedelta(
-        np.random.randint(3, 14, size=len(df_anon)),
-        unit="D"
+for client in CLIENTS:
+    anonymize_requisitions(
+        client_code=client["code"],
+        client_name=client["name"],
+        sample_ratio=client["sample_ratio"],
+        job_ref=job_ref,
+        geo_ref=geo_ref
     )
-)
-
-df_anon["Approved Date"] = df_anon["Approved Date"].clip(upper=MAX_DATE)
-
-# External Posting Date (optional)
-mask = np.random.rand(len(df_anon)) < 0.7
-df_anon.loc[mask, "External Posting Date"] = (
-    df_anon.loc[mask, "Approved Date"]
-    + pd.to_timedelta(np.random.randint(1, 10, size=mask.sum()), unit="D")
-)
-
-df_anon["External Posting Date"] = df_anon["External Posting Date"].clip(upper=MAX_DATE)
-
-# Internal Careers Posting
-df_anon["Internal Careers Posting"] = (
-    df_anon["Approved Date"]
-    + pd.to_timedelta(np.random.randint(0, 5, size=len(df_anon)), unit="D")
-)
-
-df_anon["Internal Careers Posting"] = df_anon["Internal Careers Posting"].clip(upper=MAX_DATE)
-
-df_anon["Posting Date"] = df_anon[
-    ["External Posting Date", "Internal Careers Posting"]
-].min(axis=1)
-
-df_anon["Posting Date"] = df_anon["Posting Date"].clip(upper=MAX_DATE)
-
-df_anon["Transaction Date"] = df_anon["Posting Date"]
-
-df_anon["Campaign Year"] = df_anon["Posting Date"].dt.year
-
-df_anon["Target Hire Date"] = (
-    df_anon["Posting Date"]
-    + pd.to_timedelta(
-        np.random.randint(30, 120, size=len(df_anon)),
-        unit="D"
-    )
-).clip(upper=MAX_DATE)
-
-df_anon["Contract End Date"] = (
-    df_anon["Target Hire Date"]
-    + pd.to_timedelta(
-        np.random.randint(180, 720, size=len(df_anon)),
-        unit="D"
-    )
-).clip(upper=MAX_DATE)
-
-# Intake Meeting happens shortly before Approved Date
-df_anon["Intake Meeting"] = (
-    df_anon["Approved Date"]
-    - pd.to_timedelta(
-        np.random.randint(1, 10, size=len(df_anon)),
-        unit="D"
-    )
-)
-
-df_anon["Intake Meeting"] = df_anon["Intake Meeting"].clip(upper=MAX_DATE)
-
-# ============================================================
-# Business logic derivations
-# ============================================================
-
-# Workflow depends on Job Grade, Programme Type, and Number of Openings
-df_anon["Workflow Name"] = df_anon.apply(derive_workflow_name, axis=1)
-
-df_anon["Posting Agency"] = np.where(
-    df_anon["External Posting Date"].notna(),
-    "Yes",
-    "No"
-)
-
-df_anon["Internal Only Requisition"] = np.where(
-    df_anon["External Posting Date"].notna(),
-    "No",
-    "Yes"
-)
-
-df_anon["Publish To Agencies"] = np.where(
-    df_anon["Posting Agency"] == "Yes", "Yes", "No"
-)
-
-df_anon["Posting Type (Int/Ext)"] = np.where(
-    df_anon["External Posting Date"].notna(),
-    "External",
-    "Internal"
-)
-
-ALL_RECRUITERS = df_anon["Recruiter"].dropna().unique()
-
-def pick_secondary(row):
-    if len(ALL_RECRUITERS) <= 1:
-        return None
-    return np.random.choice([r for r in ALL_RECRUITERS if r != row["Recruiter"]])
-
-df_anon["Secondary Recruiter"] = df_anon.apply(pick_secondary, axis=1)
-
-if "Is Evergreen" in df_anon.columns:
-    df_anon["Pipeline (Evergreen)"] = (
-        df_anon["Is Evergreen"]
-        .fillna("No")
-        .replace("", "No")
-    )
-else:
-    df_anon["Pipeline (Evergreen)"] = "No"
-
-# ============================================================
-# Free-text cleanup
-# ============================================================
-
-text_cols = [
-    "Recruiting Instruction",
-    "Close Comments",
-    "Justification",
-    "Pending Role Assignment (for Open/Frozen Job Requisitions)"
-]
-
-for col in text_cols:
-    if col in df_anon.columns:
-        df_anon[col] = None
-
-print("Free-text cleared")
-
-# ============================================================
-# Requisitions schema – final column selection & renaming
-# ============================================================
-
-REQUISITION_COLUMNS_MAP = {
-    "Workflow Name": "Workflow Name",
-    "Country": "Country",
-    "Job Requisition ID": "Requisition ID",
-    "Posting Agency": "Posting Agency",
-    "City": "City",
-    "Job Posting Title": "Final Job Title",
-    "Advertising Country": "Advertising Country",
-    "Approved Date": "Approved Date",
-    "Recruiter": "ATS Recruiter",
-    "Primary Sourcer": "Sourcer",
-    "Justification": "Business Justification",
-    "Close Date": "Closed Date",
-    "Contract End Date": "Contract End Date",
-    "County": "County",
-    "Created By HM": "Created By HM",
-    "Currency": "Currency",
-    "Expected Salary Max": "Expected Salary Max",
-    "Expected Salary Min": "Expected Salary Min",
-    "Target Hire Date": "Expected Start Date",
-    "External Posting Date": "External Posting Date",
-    "Intake Meeting": "Intake Meeting",
-    "Internal Only Requisition": "Internal Only Requisition",
-    "Internal Careers Posting": "Internal Careers Posting",
-    "Job Family": "Job Family",
-    "Job Desc": "Job Desc",
-    "Job Grade": "Job Grade",
-    "Number of Openings Total": "No Positions Total",
-    "Operating Structure": "Org Level",
-    "Pipeline (Evergreen)": "Pipeline (Evergreen)",
-    "Posting Date": "Posting Date",
-    "Publish To Agencies": "Publish To Agencies",
-    "Secondary Recruiter": "Secondary Recruiter",
-    "Worker Type Hiring Requirement": "Type of Position",
-    "Transaction Date": "Transaction Date",
-    "Posting Type (Int/Ext)": "Posting Type (Int/Ext)",
-    "Recruiting Start Date": "Recruitment start date",
-    "Job Requisition Status": "Current Req Status",
-    "Programme Type": "Programme Type",
-    "Campaign Year": "Campaign Year"
-}
-
-# Keep only required columns that actually exist
-existing_columns = {
-    src: tgt
-    for src, tgt in REQUISITION_COLUMNS_MAP.items()
-    if src in df_anon.columns
-}
-
-df_anon = df_anon[list(existing_columns.keys())].rename(columns=existing_columns)
-
-date_cols = df_anon.select_dtypes(include="datetime64[ns]").columns
-
-for col in date_cols:
-    df_anon[col] = clamp_date(df_anon[col], MAX_DATE)
-
-assert df_anon.select_dtypes("datetime64[ns]").max().max() <= MAX_DATE
-
-print("Date validation passed (<= 2026-01-31)")
-print("Final Requisitions schema applied")
-print("Columns:", list(df_anon.columns))
-
-# ============================================================
-# Save output
-# ============================================================
-
-df_anon.to_excel(OUTPUT_FILE, index=False)
-print(f"Anonymized file saved: {OUTPUT_FILE}")
