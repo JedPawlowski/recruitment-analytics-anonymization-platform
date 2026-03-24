@@ -87,6 +87,21 @@ project/
 
 ---
 
+# 📦 Mapping Files
+
+Mapping files are used to ensure **deterministic anonymization** and consistency across datasets.
+
+Due to their size and sensitivity, they are **not included in this repository**.
+
+They can be generated using the provided scripts:
+
+```bash
+python scripts/generate_application_id_map.py
+python scripts/generate_candidate_id_map.py
+```
+
+---
+
 # 🔐 Anonymization Strategy
 
 The solution focuses on **realism rather than simple masking**.
